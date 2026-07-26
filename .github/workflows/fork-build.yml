@@ -26,13 +26,29 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7.0.0
+        with:
+          # Full history: the semver patch number is derived from the commit count.
+          fetch-depth: 0
 
-      - name: Resolve image name
+      - name: Resolve image name and version
         id: image
         run: |
           owner="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
-          echo "name=ghcr.io/$owner/kuayle" >> "$GITHUB_OUTPUT"
-          echo "sha=sha-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+          # ArgoCD Image Updater watches this image with updateStrategy: semver and
+          # allowTags "regexp:^v0\.1\.[0-9]+$", so every build needs a tag of that exact
+          # shape that sorts ABOVE the previous one or no rollout happens.
+          #
+          # The patch number is the commit count on this branch. It is monotonic, needs
+          # no state outside git, and sits far above upstream's v0.1.x line, so a fork
+          # build always wins the semver comparison even right after merging an upstream
+          # release. Do not rewrite this branch's history — a shrinking count would stall
+          # the updater, which never moves backwards.
+          {
+            echo "name=ghcr.io/$owner/kuayle"
+            echo "sha=sha-$(git rev-parse --short HEAD)"
+            echo "semver=v0.1.$(git rev-list --count HEAD)"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4.1.0
@@ -52,9 +68,11 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
+            ${{ steps.image.outputs.name }}:${{ steps.image.outputs.semver }}
             ${{ steps.image.outputs.name }}:latest
             ${{ steps.image.outputs.name }}:${{ steps.image.outputs.sha }}
           labels: |
+            org.opencontainers.image.version=${{ steps.image.outputs.semver }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=gha,scope=fork-all-in-one
@@ -66,9 +84,10 @@ jobs:
             echo "### Image pushed"
             echo
             echo '```'
-            echo "${{ steps.image.outputs.name }}:${{ steps.image.outputs.sha }}"
+            echo "${{ steps.image.outputs.name }}:${{ steps.image.outputs.semver }}"
             echo "${{ steps.image.outputs.name }}:latest"
+            echo "${{ steps.image.outputs.name }}:${{ steps.image.outputs.sha }}"
             echo '```'
             echo
-            echo "Pin the \`sha-\` tag in your deployment so rollouts are immutable."
+            echo "ArgoCD Image Updater tracks the \`${{ steps.image.outputs.semver }}\` tag."
           } >> "$GITHUB_STEP_SUMMARY"
