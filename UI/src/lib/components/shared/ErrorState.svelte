@@ -9,7 +9,7 @@
 	<p class="text-sm text-[var(--color-error)]">{message}</p>
 	{#if onretry}
 		<button
-			onclick={onretry}
+			onclick={() => onretry?.()}
 			class="rounded-md border border-[var(--app-border)] px-3 py-1.5 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]"
 		>
 			Try again

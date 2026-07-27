@@ -1,7 +1,9 @@
-.PHONY: dev dev-all dev-backend dev-frontend migrate-up migrate-down seed reset-dev test test-backend test-frontend lint docker-up docker-down ensure-trivy scan scan-backend scan-frontend
+.PHONY: dev dev-all dev-backend dev-frontend dev-start-services dev-reset migrate-up migrate-down seed reset-dev test test-backend test-frontend lint docker-up docker-down ensure-trivy scan scan-backend scan-frontend
 
 # Load .env into shell commands
 DOTENV := $(shell [ -f .env ] && echo "set -a && . ./.env && set +a &&" || echo "")
+DOCKER_SOCKET_GID = $$(docker run --rm -v /var/run/docker.sock:/docker.sock:ro alpine:3.22 stat -c '%g' /docker.sock)
+DEV_MACHINE_COMPOSE = DEV_MACHINE_DOCKER_GID="$(DOCKER_SOCKET_GID)" docker compose
 
 dev:
 	$(MAKE) migrate-up
@@ -12,7 +14,21 @@ dev-all: dev-start-services dev
 
 dev-start-services:
 	@echo "Starting Postgres and Redis..."
-	docker compose up postgres redis -d
+	$(DEV_MACHINE_COMPOSE) up -d --wait postgres redis
+	@echo "Applying migrations required by the Dev Machine gateway role..."
+	$(MAKE) migrate-up
+	@echo "Ensuring local Dev Machine runtime images exist..."
+	$(DEV_MACHINE_COMPOSE) --profile dev-machine-images build dev-machine-ide dev-machine-browser dev-machine-collector dev-machine-egress dev-machine-agent-claude dev-machine-agent-opencode dev-machine-agent-codex
+	@echo "Starting Dev Machine control plane and wildcard TLS proxy (*.machines.localhost)..."
+	@echo "Note: this dev proxy binds 127.0.0.1:80 and 127.0.0.1:443; stop the selfhosting stack first if those ports are occupied."
+	$(DEV_MACHINE_COMPOSE) --profile dev-machines rm -sf machine-gateway-db-provision >/dev/null 2>&1 || true
+	$(DEV_MACHINE_COMPOSE) --profile dev-machines up -d --build --wait machine-gateway-db-provision machine-gateway machine-manager machine-proxy
+
+dev-reset:
+	$(MAKE) reset-dev
+	$(MAKE) seed
+	$(MAKE) dev-start-services
+	$(MAKE) dev
 
 dev-smee:
 	@echo "Starting smee webhook proxy..."
@@ -53,7 +69,7 @@ lint:
 	cd UI && npm run lint
 
 docker-up:
-	docker compose up --build -d
+	docker compose --profile app up --build -d
 
 docker-down:
 	docker compose down
