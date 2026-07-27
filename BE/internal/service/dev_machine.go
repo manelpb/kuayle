@@ -918,11 +918,13 @@ func (s *DevMachineService) ListCheckouts(ctx context.Context, workspaceID, mach
 	if _, err := s.GetForUser(ctx, workspaceID, machineID, userID); err != nil {
 		return nil, err
 	}
-	return s.store.ListCheckouts(ctx, workspaceID, machineID)
+	items, err := s.store.ListCheckouts(ctx, workspaceID, machineID)
+	return nonNilSlice(items), err
 }
 
 func (s *DevMachineService) ListEnvironments(ctx context.Context, workspaceID uuid.UUID) ([]domain.DevMachineEnvironment, error) {
-	return s.store.ListEnvironments(ctx, workspaceID)
+	items, err := s.store.ListEnvironments(ctx, workspaceID)
+	return nonNilSlice(items), err
 }
 
 func (s *DevMachineService) GetEnvironment(ctx context.Context, workspaceID, environmentID uuid.UUID) (*domain.DevMachineEnvironment, error) {
@@ -1091,7 +1093,8 @@ func (s *DevMachineService) ListServices(ctx context.Context, workspaceID, machi
 	if _, err := s.GetForUser(ctx, workspaceID, machineID, userID); err != nil {
 		return nil, err
 	}
-	return s.store.ListServices(ctx, workspaceID, machineID)
+	items, err := s.store.ListServices(ctx, workspaceID, machineID)
+	return nonNilSlice(items), err
 }
 
 func (s *DevMachineService) AvailableProviders(ctx context.Context, workspaceID uuid.UUID) ([]dto.AgentProviderResponse, error) {
@@ -1743,14 +1746,16 @@ func (s *DevMachineService) ListEvents(ctx context.Context, workspaceID, machine
 	if _, err := s.GetForUser(ctx, workspaceID, machineID, userID); err != nil {
 		return nil, err
 	}
-	return s.store.ListEvents(ctx, workspaceID, machineID, afterID, limit)
+	items, err := s.store.ListEvents(ctx, workspaceID, machineID, afterID, limit)
+	return nonNilSlice(items), err
 }
 
 func (s *DevMachineService) ListLogs(ctx context.Context, workspaceID, machineID, userID uuid.UUID, runID *uuid.UUID, afterID int64, limit int) ([]domain.DevMachineLogChunk, error) {
 	if _, err := s.GetForUser(ctx, workspaceID, machineID, userID); err != nil {
 		return nil, err
 	}
-	return s.store.ListLogs(ctx, workspaceID, machineID, runID, afterID, limit)
+	items, err := s.store.ListLogs(ctx, workspaceID, machineID, runID, afterID, limit)
+	return nonNilSlice(items), err
 }
 
 func (s *DevMachineService) ListResourceSamples(ctx context.Context, workspaceID, machineID, userID uuid.UUID, limit int) ([]domain.DevMachineResourceSample, error) {
@@ -1760,7 +1765,15 @@ func (s *DevMachineService) ListResourceSamples(ctx context.Context, workspaceID
 	if limit <= 0 || limit > 500 {
 		limit = 120
 	}
-	return s.store.ListResourceSamples(ctx, workspaceID, machineID, limit)
+	items, err := s.store.ListResourceSamples(ctx, workspaceID, machineID, limit)
+	return nonNilSlice(items), err
+}
+
+func nonNilSlice[T any](items []T) []T {
+	if items == nil {
+		return []T{}
+	}
+	return items
 }
 
 func (s *DevMachineService) IngestEvent(ctx context.Context, rawToken string, input dto.CollectorEventInput) error {

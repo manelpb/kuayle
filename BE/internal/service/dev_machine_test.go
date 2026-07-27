@@ -1099,6 +1099,32 @@ func TestUserScopedMachineAccessRequiresCreator(t *testing.T) {
 	require.ErrorIs(t, err, ErrMachineNotFound)
 }
 
+func TestEmptyMachineCollectionsReturnJSONArrays(t *testing.T) {
+	workspaceID, ownerID, machineID := uuid.New(), uuid.New(), uuid.New()
+	store := &devMachineStoreFake{machine: &domain.DevMachine{
+		ID: machineID, WorkspaceID: workspaceID, CreatedByUserID: &ownerID,
+		Status: domain.DevMachineStatusRunning, DesiredStatus: domain.DevMachineStatusRunning,
+		ExpiresAt: time.Now().Add(time.Hour),
+	}}
+	svc := newTestDevMachineService(store)
+
+	services, err := svc.ListServices(context.Background(), workspaceID, machineID, ownerID)
+	require.NoError(t, err)
+	require.NotNil(t, services)
+	checkouts, err := svc.ListCheckouts(context.Background(), workspaceID, machineID, ownerID)
+	require.NoError(t, err)
+	require.NotNil(t, checkouts)
+	events, err := svc.ListEvents(context.Background(), workspaceID, machineID, ownerID, 0, 100)
+	require.NoError(t, err)
+	require.NotNil(t, events)
+	logs, err := svc.ListLogs(context.Background(), workspaceID, machineID, ownerID, nil, 0, 100)
+	require.NoError(t, err)
+	require.NotNil(t, logs)
+	samples, err := svc.ListResourceSamples(context.Background(), workspaceID, machineID, ownerID, 100)
+	require.NoError(t, err)
+	require.NotNil(t, samples)
+}
+
 func TestMachineDeletionRequiresCreator(t *testing.T) {
 	workspaceID, ownerID, otherID, machineID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	for _, test := range []struct {

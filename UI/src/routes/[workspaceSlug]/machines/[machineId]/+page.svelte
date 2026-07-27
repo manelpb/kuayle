@@ -245,17 +245,19 @@
 			listMachineLogs(targetSlug, targetMachineId, logCursor)
 		]);
 		if (!isCurrentRefresh(targetSlug, targetMachineId, generation, sequence)) return;
-		if (eventResult.status === 'fulfilled' && eventResult.value.length > 0) {
-			const retained = appendRecentTelemetry(events, eventResult.value, DEV_MACHINE_EVENT_RETENTION);
+		const newEvents = eventResult.status === 'fulfilled' ? (eventResult.value ?? []) : [];
+		const newLogs = logResult.status === 'fulfilled' ? (logResult.value ?? []) : [];
+		if (newEvents.length > 0) {
+			const retained = appendRecentTelemetry(events, newEvents, DEV_MACHINE_EVENT_RETENTION);
 			events = retained.items;
 			eventsLimited ||= retained.dropped > 0;
-			eventsAfterId = Math.max(eventsAfterId, ...eventResult.value.map((event) => event.id));
+			eventsAfterId = Math.max(eventsAfterId, ...newEvents.map((event) => event.id));
 		}
-		if (logResult.status === 'fulfilled' && logResult.value.length > 0) {
-			const retained = appendRecentTelemetry(logs, logResult.value, DEV_MACHINE_LOG_RETENTION);
+		if (newLogs.length > 0) {
+			const retained = appendRecentTelemetry(logs, newLogs, DEV_MACHINE_LOG_RETENTION);
 			logs = retained.items;
 			logsLimited ||= retained.dropped > 0;
-			logsAfterId = Math.max(logsAfterId, ...logResult.value.map((log) => log.id));
+			logsAfterId = Math.max(logsAfterId, ...newLogs.map((log) => log.id));
 		}
 		const terminalParam = page.url.searchParams.get('terminal');
 		if (terminalParam === '1' && !terminalQueryConsumed) {
