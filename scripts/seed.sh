@@ -1,29 +1,115 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
-cd "$(dirname "$0")/.."
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR/.."
 
 echo "=== Kuayle - Seed Data ==="
 
-# Ensure Docker CLI is in PATH (macOS Docker Desktop)
 export PATH="/Applications/Docker.app/Contents/Resources/bin:$PATH"
 
-# Load env
+ENVIRONMENT_FROM_CALLER="${ENVIRONMENT-}"
+
 if [ -f .env ]; then
     set -a && source .env && set +a
 fi
 
-PSQL="docker compose exec -T postgres psql -U kuayle -d kuayle -q"
+refuse_production() {
+    case "${1:-}" in
+    [Pp][Rr][Oo][Dd]|[Pp][Rr][Oo][Dd][Uu][Cc][Tt][Ii][Oo][Nn])
+        echo "FATAL: Refusing to seed the production database!" >&2
+        exit 1
+    ;;
+    esac
+}
 
-echo "Cleaning database..."
-$PSQL <<'SQL'
--- Truncate all tables in dependency order
+refuse_production "$ENVIRONMENT_FROM_CALLER"
+refuse_production "${ENVIRONMENT:-development}"
+
+POSTGRES_USER="${POSTGRES_USER:-kuayle}"
+POSTGRES_DB="${POSTGRES_DB:-kuayle}"
+
+PSQL=(docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -q -v ON_ERROR_STOP=1)
+
+echo "Generating bcrypt hash for Password123!..."
+HASHGEN_FILE="$(mktemp "${TMPDIR:-/tmp}/kuayle-hashgen.XXXXXX.go")"
+trap 'rm -f "$HASHGEN_FILE"' EXIT
+cat > "$HASHGEN_FILE" <<'GOEOF'
+package main
+import (
+    "fmt"
+    "golang.org/x/crypto/bcrypt"
+)
+func main() {
+    hash, err := bcrypt.GenerateFromPassword([]byte("Password123!"), bcrypt.DefaultCost)
+    if err != nil {
+        panic(err)
+    }
+    fmt.Print(string(hash))
+}
+GOEOF
+HASH=$(cd BE && go run "$HASHGEN_FILE")
+
+if [ -z "$HASH" ]; then
+    echo "FATAL: bcrypt hash generation failed" >&2
+    exit 1
+fi
+
+echo "Checking for non-destroyed dev machines..."
+NON_DESTROYED_DEV_MACHINE_COUNT=$("${PSQL[@]}" -tAc "SELECT COUNT(*) FROM dev_machines WHERE status <> 'destroyed'")
+if [ "$NON_DESTROYED_DEV_MACHINE_COUNT" != "0" ]; then
+    echo "FATAL: $NON_DESTROYED_DEV_MACHINE_COUNT non-destroyed dev_machine(s) exist. Tear them down before seeding to avoid Docker orphans." >&2
+    exit 1
+fi
+
+echo "Seeding database in a single transaction..."
+
+"${PSQL[@]}" -v "hash=$HASH" <<'SQL'
+BEGIN;
+
+-- ==========================================================================
+-- TRUNCATE all tables (v33-comprehensive).  CASCADE handles FK dependencies.
+-- ==========================================================================
 TRUNCATE TABLE
-    favorites,
-    issue_group_items,
+    dev_machine_access_logs,
+    dev_machine_access_sessions,
+    dev_machine_access_tickets,
+    dev_machine_agent_providers,
+    dev_machine_agent_run_steps,
+    dev_machine_agent_runs,
+    dev_machine_artifacts,
+    dev_machine_checkouts,
+    dev_machine_env_vars,
+    dev_machine_environments,
+    dev_machine_events,
+    dev_machine_git_refs,
+    dev_machine_log_chunks,
+    dev_machines,
+    dev_machine_operations,
+    dev_machine_resource_samples,
+    dev_machine_runtime_credentials,
+    dev_machine_scope_settings,
+    dev_machine_services,
+    dev_machine_terminal_sessions,
+    dev_machine_tokens,
+    dev_machine_volumes,
+    dev_machine_workspace_policies,
+    github_auto_transitions,
+    github_branches,
+    github_commits,
+    github_installations,
+    github_app_configs,
+    github_pull_requests,
+    github_repos,
+    assets,
+    ai_settings,
+    issue_lifecycle_events,
+    issue_subscribers,
     issue_groups,
+    issue_group_items,
     issue_assignees,
-    team_statuses,
+    favorites,
+    shared_links,
     issue_history,
     comments,
     issue_labels,
@@ -35,39 +121,21 @@ TRUNCATE TABLE
     webhooks,
     issues,
     cycles,
-    labels,
-    projects,
+    project_status_visibility,
     project_members,
+    projects,
+    labels,
+    team_statuses,
     team_members,
-    workspace_members,
     teams,
+    workspace_members,
+    user_preferences,
     workspaces,
     users
 CASCADE;
-SQL
-echo "Database cleaned."
-
-echo "Generating seed data..."
-
-# Generate bcrypt hash for "Password123!" using Go
-cat > /tmp/hashgen.go <<'GOEOF'
-package main
-import (
-    "fmt"
-    "golang.org/x/crypto/bcrypt"
-)
-func main() {
-    hash, _ := bcrypt.GenerateFromPassword([]byte("Password123!"), bcrypt.DefaultCost)
-    fmt.Print(string(hash))
-}
-GOEOF
-HASH=$(cd BE && go run /tmp/hashgen.go)
-rm -f /tmp/hashgen.go
-
-docker compose exec -T postgres psql -U kuayle -d kuayle -q -v "hash=$HASH" <<'SQL'
 
 -- ============================================================
--- USERS
+-- USERS - 5 demo users fixed IDs used by UI demo defaults
 -- ============================================================
 INSERT INTO users (id, email, name, display_name, password_hash) VALUES
     ('a0000000-0000-0000-0000-000000000001', 'alice@kuayle.dev', 'Alice Chen', 'Alice', :'hash'),
@@ -77,7 +145,17 @@ INSERT INTO users (id, email, name, display_name, password_hash) VALUES
     ('a0000000-0000-0000-0000-000000000005', 'eve@kuayle.dev', 'Eve Williams', 'Eve', :'hash');
 
 -- ============================================================
--- WORKSPACES
+-- USER PREFERENCES - one row per demo user
+-- ============================================================
+INSERT INTO user_preferences (user_id, font_size, pointer_cursors, theme_mode, light_theme, dark_theme) VALUES
+    ('a0000000-0000-0000-0000-000000000001', 'default', true, 'dark', 'light', 'dark'),
+    ('a0000000-0000-0000-0000-000000000002', 'default', true, 'dark', 'light', 'dark'),
+    ('a0000000-0000-0000-0000-000000000003', 'default', true, 'dark', 'light', 'dark'),
+    ('a0000000-0000-0000-0000-000000000004', 'default', true, 'dark', 'light', 'dark'),
+    ('a0000000-0000-0000-0000-000000000005', 'default', true, 'dark', 'light', 'dark');
+
+-- ============================================================
+-- WORKSPACES - Acme Corp (owner Alice) and Side Project
 -- ============================================================
 INSERT INTO workspaces (id, name, slug, owner_id) VALUES
     ('b0000000-0000-0000-0000-000000000001', 'Acme Corp', 'acme', 'a0000000-0000-0000-0000-000000000001'),
@@ -316,29 +394,82 @@ INSERT INTO views (workspace_id, creator_id, name, description, filters, is_shar
     ('b0000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000002', 'Active Bugs', 'All open bugs', '{"status": "backlog,todo,in_progress,in_review", "label": "d0000000-0000-0000-0000-000000000001"}', true),
     ('b0000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000001', 'Q1 Launch Tracker', 'All issues in Q1 Launch project', '{"project": "e0000000-0000-0000-0000-000000000001"}', false);
 
+-- ============================================================
+-- ISSUE SUBSCRIBERS (v28)
+-- ============================================================
+INSERT INTO issue_subscribers (issue_id, user_id) VALUES
+    ('10000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000001'),
+    ('10000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000002'),
+    ('10000000-0000-0000-0000-000000000003', 'a0000000-0000-0000-0000-000000000004'),
+    ('10000000-0000-0000-0000-000000000013', 'a0000000-0000-0000-0000-000000000002'),
+    ('10000000-0000-0000-0000-000000000015', 'a0000000-0000-0000-0000-000000000003'),
+    ('10000000-0000-0000-0000-000000000019', 'a0000000-0000-0000-0000-000000000004'),
+    ('10000000-0000-0000-0000-000000000037', 'a0000000-0000-0000-0000-000000000001');
+
+-- ============================================================
+-- DEV MACHINE WORKSPACE POLICIES (v33)
+-- Acme Corp: enabled with practical dev limits
+-- Side Project: disabled (no row needed — default NOT NULL FALSE)
+-- ============================================================
+INSERT INTO dev_machine_workspace_policies (
+    workspace_id, enabled, max_concurrent_machines, max_machines_per_user,
+    max_daily_agent_runs, max_runtime_minutes, max_disk_gb, allowed_providers,
+    idle_pause_minutes
+) VALUES (
+    'b0000000-0000-0000-0000-000000000001',
+    TRUE,
+    3, 1, 20, 480, 50,
+    '["claude-code","opencode","codex"]'::jsonb,
+    240
+);
+
+COMMIT;
 SQL
 
 echo ""
 echo "=== Seed data created ==="
 echo ""
-echo "  Workspaces:  Acme Corp (acme), Side Project (side-project)"
-echo "  Teams:       Engineering (ENG), Design (DES), Platform (PLT), Core (CORE)"
-echo "  Users:       5 users, all with password: Password123!"
+
+# Derive counts from the database — no more stale hardcodes
+db_scalar() {
+    "${PSQL[@]}" -tAc "$1"
+}
+
+USER_COUNT=$(db_scalar "SELECT COUNT(*) FROM users")
+PREF_COUNT=$(db_scalar "SELECT COUNT(*) FROM user_preferences")
+WS_COUNT=$(db_scalar "SELECT COUNT(*) FROM workspaces")
+TEAM_COUNT=$(db_scalar "SELECT COUNT(*) FROM teams")
+ISSUE_COUNT=$(db_scalar "SELECT COUNT(*) FROM issues")
+LABEL_COUNT=$(db_scalar "SELECT COUNT(*) FROM labels")
+PROJECT_COUNT=$(db_scalar "SELECT COUNT(*) FROM projects")
+CYCLE_COUNT=$(db_scalar "SELECT COUNT(*) FROM cycles")
+SUB_COUNT=$(db_scalar "SELECT COUNT(*) FROM issue_subscribers")
+POLICY_COUNT=$(db_scalar "SELECT COUNT(*) FROM dev_machine_workspace_policies WHERE enabled = true")
+DEV_MACHINE_COUNT=$(db_scalar "SELECT COUNT(*) FROM dev_machines")
+LIVE_DEV_MACHINE_COUNT=$(db_scalar "SELECT COUNT(*) FROM dev_machines WHERE status <> 'destroyed'")
+
+echo "  Workspaces: $WS_COUNT (Acme Corp, Side Project)"
+echo "  Teams: $TEAM_COUNT (ENG, DES, PLT, CORE)"
+echo "  Users: $USER_COUNT, all with password: Password123!"
 echo ""
 echo "  Login credentials:"
 echo "  ┌──────────────────────┬───────────────┬──────────┐"
 echo "  │ Email                │ Name          │ Role     │"
 echo "  ├──────────────────────┼───────────────┼──────────┤"
-echo "  │ alice@kuayle.dev     │ Alice Chen    │ Owner    │"
-echo "  │ bob@kuayle.dev       │ Bob Martinez  │ Admin    │"
-echo "  │ carol@kuayle.dev     │ Carol Kim     │ Member   │"
-echo "  │ dave@kuayle.dev      │ Dave Johnson  │ Member   │"
-echo "  │ eve@kuayle.dev       │ Eve Williams  │ Guest    │"
+echo "  │ alice@kuayle.dev     │ Alice Chen    │ owner    │"
+echo "  │ bob@kuayle.dev       │ Bob Martinez  │ admin    │"
+echo "  │ carol@kuayle.dev     │ Carol Kim     │ member   │"
+echo "  │ dave@kuayle.dev      │ Dave Johnson  │ member   │"
+echo "  │ eve@kuayle.dev       │ Eve Williams  │ guest    │"
 echo "  └──────────────────────┴───────────────┴──────────┘"
 echo "  Password for all: Password123!"
 echo ""
-echo "  Issues: 23 across 4 teams"
-echo "  Labels: 9 (Bug, Feature, Improvement, Tech Debt, etc.)"
-echo "  Projects: 4 (Q1 Launch, Auth Overhaul, Mobile App, MVP)"
-echo "  Cycles: 4 (Sprint 1-3 + Design Sprint 1)"
+echo "  Issues: $ISSUE_COUNT across $TEAM_COUNT teams"
+echo "  Labels: $LABEL_COUNT"
+echo "  Projects: $PROJECT_COUNT"
+echo "  Cycles: $CYCLE_COUNT"
+echo "  User Preferences: $PREF_COUNT"
+echo "  Issue Subscribers: $SUB_COUNT"
+echo "  Dev Machine Policies Enabled: $POLICY_COUNT"
+echo "  Dev Machines: $DEV_MACHINE_COUNT total, $LIVE_DEV_MACHINE_COUNT non-destroyed"
 echo ""

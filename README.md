@@ -142,16 +142,28 @@ App at `http://localhost:5173` · API at `http://localhost:8080`
 
 ```sh
 cp .env.example .env
-docker compose up postgres redis -d
-make migrate-up && make seed
+make reset-dev
+make seed
+make dev-start-services
 make dev
 ```
+
+`make dev` runs the Go backend on `localhost:8080` and Vite on
+`localhost:5173` directly on the host for hot reload. The root Compose stack is
+for supporting services only during local development: Postgres, Redis, the Dev
+Machine gateway/manager, runtime image builds, and the Caddy wildcard TLS proxy
+for `https://*.machines.localhost`. The dev proxy binds `127.0.0.1:80` and
+`127.0.0.1:443`; stop the selfhosting stack first if it is using those ports.
+The root gateway container is named `kuayle-dev-machine-gateway` to avoid the
+selfhosting `kuayle-machine-gateway` name.
 
 ### 📖 Commands
 
 | Command                | What it does                          |
 | ---------------------- | ------------------------------------- |
 | `make dev`             | Run backend + frontend (with migrate) |
+| `make dev-start-services` | Start Postgres, Redis, and Dev Machine infrastructure |
+| `make dev-reset`       | Reset, seed, start infrastructure, then run host dev |
 | `make dev-backend`     | Backend only                          |
 | `make dev-frontend`    | Frontend only                         |
 | `make dev-full`        | Backend + frontend + smee proxy       |
