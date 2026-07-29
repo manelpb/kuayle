@@ -32,8 +32,9 @@ export async function createDefaultWorkspace<T>(
 	createSuffix: () => string = randomSlugSuffix
 ): Promise<T> {
 	const name = defaultWorkspaceName(userName);
-	const baseSlug = toSlug(userName) || SLUG_FALLBACK;
-	let slug = baseSlug;
+	const derivedSlug = toSlug(userName);
+	const baseSlug = derivedSlug || SLUG_FALLBACK;
+	let slug = derivedSlug || slugWithSuffix(baseSlug, createSuffix());
 
 	for (let attempt = 0; ; attempt += 1) {
 		try {

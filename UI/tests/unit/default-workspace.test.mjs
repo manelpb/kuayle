@@ -46,6 +46,21 @@ test('creates the default workspace with the friendly slug first', async () => {
 	assert.deepEqual(requests, [{ name: "Ada Lovelace's Workspace", slug: 'ada-lovelace' }]);
 });
 
+test('uses a unique fallback slug when the name has no ASCII characters', async () => {
+	const requests = [];
+
+	await createDefaultWorkspace(
+		'東京',
+		async (name, slug) => {
+			requests.push({ name, slug });
+			return { slug };
+		},
+		() => 'deadbeef'
+	);
+
+	assert.deepEqual(requests, [{ name: "東京's Workspace", slug: 'workspace-deadbeef' }]);
+});
+
 test('retries a slug collision with a random suffix', async () => {
 	const requests = [];
 
