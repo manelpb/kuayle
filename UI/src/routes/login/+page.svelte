@@ -7,7 +7,7 @@
 	import { authState } from '$lib/features/auth/auth.state.svelte';
 	import { listWorkspaces, createWorkspace } from '$lib/api/workspaces';
 	import { demoMode, demoUsers, type DemoUser } from '$lib/demo';
-	import { toSlug, SLUG_FALLBACK } from '$lib/utils/slug';
+	import { createDefaultWorkspace } from '$lib/utils/default-workspace';
 	import { appToast } from '$lib/features/toast/toast';
 
 	let mode = $state<'login' | 'register'>('login');
@@ -37,8 +37,7 @@
 				goto(`/${workspaces[0].slug}/inbox`);
 			} else {
 				// Create default workspace
-				const slug = toSlug(user.name) || SLUG_FALLBACK;
-				const ws = await createWorkspace(`${user.name}'s Workspace`, slug);
+				const ws = await createDefaultWorkspace(user.name, createWorkspace);
 				goto(`/${ws.slug}/inbox`);
 			}
 		} catch (err: any) {
